@@ -1,0 +1,1200 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>دواي - إدارة الصيدليات</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/6.26.0/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: "Cairo", sans-serif;
+      background:
+        radial-gradient(circle at top right, rgba(16, 185, 129, 0.14), transparent 30%),
+        radial-gradient(circle at bottom left, rgba(6, 95, 70, 0.10), transparent 28%),
+        linear-gradient(180deg, #f8fffc 0%, #eefbf5 100%);
+    }
+  </style>
+</head>
+<body class="text-slate-800">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useEffect, useState } = React;
+
+    const API_BASE = 'http://localhost:5000/api';
+    const TOKEN_KEY = 'daway_token';
+    const USER_KEY = 'daway_user';
+
+    function readToken() {
+      return localStorage.getItem(TOKEN_KEY);
+    }
+
+    function readUser() {
+      const raw = localStorage.getItem(USER_KEY);
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw);
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function storeSession(token, user) {
+      localStorage.setItem(TOKEN_KEY, token);
+      localStorage.setItem(USER_KEY, JSON.stringify(user));
+    }
+
+    function clearSession() {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(USER_KEY);
+    }
+
+    function authHeaders() {
+      const token = readToken();
+      return token ? { Authorization: `Bearer ${token}` } : {};
+    }
+
+    async function apiFetch(path, options = {}) {
+      const response = await fetch(`${API_BASE}${path}`, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(options.headers || {}),
+          ...authHeaders(),
+        },
+      });
+
+      const contentType = response.headers.get('content-type') || '';
+      const data = contentType.includes('application/json') ? await response.json() : null;
+
+      if (!response.ok) {
+        throw new Error((data && data.message) ? data.message : 'Request failed');
+      }
+
+      return data;
+    }
+
+    function parseJwt(token) {
+      try {
+        const base64Url = token.split('.')[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function (c) {
+          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+        }).join(''));
+        return JSON.parse(jsonPayload);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function EyeButton({ visible, onClick }) {
+      return (
+        <button
+          type="button"
+          onClick={onClick}
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 transition hover:text-emerald-600"
+          aria-label="toggle password visibility"
+        >
+          <span className="text-lg leading-none">{visible ? '👁️‍🗨️' : '👁️'}</span>
+        </button>
+      );
+    }
+
+    function PasswordInput({ name, value, onChange, placeholder, visible, onToggle, required }) {
+      return (
+        <div className="relative">
+          <input
+            type={visible ? 'text' : 'password'}
+            name={name}
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            required={required}
+            className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 pl-12 outline-none transition focus:border-emerald-400 focus:bg-white"
+          />
+          <EyeButton visible={visible} onClick={onToggle} />
+        </div>
+      );
+    }
+
+    function AuthScreen({ onAuthenticated }) {
+      const [mode, setMode] = useState('login');
+      const [error, setError] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [loginVisible, setLoginVisible] = useState(false);
+      const [registerVisible, setRegisterVisible] = useState({
+        password: false,
+        confirm_password: false,
+      });
+      const [loginForm, setLoginForm] = useState({
+        email: '',
+        password: '',
+      });
+      const [registerForm, setRegisterForm] = useState({
+        pharmacy_name: '',
+        email: '',
+        password: '',
+        confirm_password: '',
+      });
+
+      const isLogin = mode === 'login';
+
+      const handleLoginChange = (event) => {
+        const { name, value } = event.target;
+        setLoginForm((current) => ({ ...current, [name]: value }));
+      };
+
+      const handleRegisterChange = (event) => {
+        const { name, value } = event.target;
+        setRegisterForm((current) => ({ ...current, [name]: value }));
+      };
+
+      const handleLogin = async (event) => {
+        event.preventDefault();
+        setError('');
+        setLoading(true);
+
+        try {
+          const data = await apiFetch('/login', {
+            method: 'POST',
+            body: JSON.stringify({
+              email: loginForm.email,
+              password: loginForm.password,
+            }),
+          });
+
+          const decoded = parseJwt(data.token);
+          const user = {
+            id: decoded.userId || decoded.user_id || data.user.id,
+            email: decoded.email || data.user.email,
+            pharmacy_name: decoded.pharmacy_name || data.user.pharmacy_name || '',
+          };
+
+          storeSession(data.token, user);
+          onAuthenticated(user, data.token);
+        } catch (err) {
+          setError(
+            err.message === 'Incorrect email or password.' || err.message === 'بريد أو كلمة مرور خاطئة'
+              ? 'البريد أو كلمة المرور خاطئة'
+              : err.message
+          );
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleRegister = async (event) => {
+        event.preventDefault();
+        setError('');
+
+        if (registerForm.password !== registerForm.confirm_password) {
+          setError('كلمة المرور وتأكيدها غير متطابقين');
+          return;
+        }
+
+        setLoading(true);
+
+        try {
+          await apiFetch('/register', {
+            method: 'POST',
+            body: JSON.stringify({
+              pharmacy_name: registerForm.pharmacy_name,
+              email: registerForm.email,
+              password: registerForm.password,
+            }),
+          });
+
+          const data = await apiFetch('/login', {
+            method: 'POST',
+            body: JSON.stringify({
+              email: registerForm.email,
+              password: registerForm.password,
+            }),
+          });
+
+          const decoded = parseJwt(data.token);
+          const user = {
+            id: decoded.userId || decoded.user_id || data.user.id,
+            email: decoded.email || data.user.email,
+            pharmacy_name: decoded.pharmacy_name || data.user.pharmacy_name || '',
+          };
+
+          storeSession(data.token, user);
+          onAuthenticated(user, data.token);
+        } catch (err) {
+          setError(
+            err.message === 'Email already exists.'
+              ? 'البريد مستخدم مسبقاً'
+              : err.message === 'Incorrect email or password.' || err.message === 'بريد أو كلمة مرور خاطئة'
+                ? 'البريد أو كلمة المرور خاطئة'
+                : err.message
+          );
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      return (
+        <div className="min-h-screen px-4 py-8">
+          <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[1.08fr_0.92fr]">
+            <section className="rounded-[2rem] border border-emerald-100 bg-white/90 p-8 shadow-[0_25px_80px_rgba(16,185,129,0.12)] backdrop-blur">
+              <p className="mb-3 inline-flex rounded-full bg-emerald-100 px-3 py-1 text-sm font-bold text-emerald-700">
+                Daway SaaS
+              </p>
+              <h1 className="text-4xl font-extrabold text-slate-900 md:text-5xl">
+                إدارة الصيدليات بواجهة عربية آمنة
+              </h1>
+              <p className="mt-4 max-w-2xl text-base leading-8 text-slate-600">
+                سجّل الدخول أو أنشئ حساباً جديداً ثم ابدأ بإدارة الأدوية والتنبيهات لكل صيدلية بشكل منفصل ومؤمّن بالكامل.
+              </p>
+
+              <div className="mt-8 grid gap-4 sm:grid-cols-2">
+                <div className="rounded-2xl bg-emerald-50 p-5">
+                  <div className="text-sm text-emerald-700">الحماية</div>
+                  <div className="mt-1 text-xl font-bold text-slate-900">JWT + bcryptjs</div>
+                </div>
+                <div className="rounded-2xl border border-slate-100 bg-white p-5">
+                  <div className="text-sm text-slate-500">العزل</div>
+                  <div className="mt-1 text-xl font-bold text-slate-900">بيانات خاصة لكل صيدلية</div>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-[2rem] border border-emerald-100 bg-white p-7 shadow-xl shadow-emerald-100/60">
+              <div className="mb-6 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900">
+                    {isLogin ? 'تسجيل الدخول' : 'إنشاء حساب جديد'}
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {isLogin ? 'أدخل بياناتك للوصول إلى لوحة التحكم' : 'أنشئ حساب صيدلية جديد'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setError('');
+                    setMode(isLogin ? 'register' : 'login');
+                  }}
+                  className="rounded-2xl border border-emerald-200 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-50"
+                >
+                  {isLogin ? 'مستخدم جديد' : 'لدي حساب'}
+                </button>
+              </div>
+
+              {error && (
+                <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+                  {error}
+                </div>
+              )}
+
+              {isLogin ? (
+                <form onSubmit={handleLogin} className="space-y-4">
+                  <input
+                    type="email"
+                    name="email"
+                    value={loginForm.email}
+                    onChange={handleLoginChange}
+                    placeholder="البريد الإلكتروني"
+                    required
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white"
+                  />
+                  <PasswordInput
+                    name="password"
+                    value={loginForm.password}
+                    onChange={handleLoginChange}
+                    placeholder="كلمة المرور"
+                    visible={loginVisible}
+                    onToggle={() => setLoginVisible((current) => !current)}
+                    required
+                  />
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full rounded-2xl bg-emerald-600 px-4 py-3 font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    {loading ? 'جاري الدخول...' : 'تسجيل الدخول'}
+                  </button>
+                </form>
+              ) : (
+                <form onSubmit={handleRegister} className="space-y-4">
+                  <input
+                    type="text"
+                    name="pharmacy_name"
+                    value={registerForm.pharmacy_name}
+                    onChange={handleRegisterChange}
+                    placeholder="اسم الصيدلية"
+                    required
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white"
+                  />
+                  <input
+                    type="email"
+                    name="email"
+                    value={registerForm.email}
+                    onChange={handleRegisterChange}
+                    placeholder="البريد الإلكتروني"
+                    required
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white"
+                  />
+                  <PasswordInput
+                    name="password"
+                    value={registerForm.password}
+                    onChange={handleRegisterChange}
+                    placeholder="كلمة المرور"
+                    visible={registerVisible.password}
+                    onToggle={() =>
+                      setRegisterVisible((current) => ({
+                        ...current,
+                        password: !current.password,
+                      }))
+                    }
+                    required
+                  />
+                  <PasswordInput
+                    name="confirm_password"
+                    value={registerForm.confirm_password}
+                    onChange={handleRegisterChange}
+                    placeholder="تأكيد كلمة المرور"
+                    visible={registerVisible.confirm_password}
+                    onToggle={() =>
+                      setRegisterVisible((current) => ({
+                        ...current,
+                        confirm_password: !current.confirm_password,
+                      }))
+                    }
+                    required
+                  />
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full rounded-2xl bg-emerald-600 px-4 py-3 font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    {loading ? 'جاري التسجيل...' : 'إنشاء الحساب'}
+                  </button>
+                </form>
+              )}
+            </section>
+          </div>
+        </div>
+      );
+    }
+
+    function MedicineForm({ onSaved, onTokenError, onToast }) {
+      const [form, setForm] = useState({
+        name: '',
+        quantity: '',
+        batch_number: '',
+        expire_date: '',
+        price: '',
+      });
+
+      const handleChange = (event) => {
+        const { name, value } = event.target;
+        setForm((current) => ({ ...current, [name]: value }));
+      };
+
+      const handleSubmit = async (event) => {
+        event.preventDefault();
+        try {
+          await apiFetch('/medicines', {
+            method: 'POST',
+            body: JSON.stringify({
+              name: form.name,
+              quantity: Number(form.quantity),
+              batch_number: form.batch_number,
+              expire_date: form.expire_date,
+              price: Number(form.price),
+            }),
+          });
+
+          setForm({
+            name: '',
+            quantity: '',
+            batch_number: '',
+            expire_date: '',
+            price: '',
+          });
+          onToast('تم إضافة الدواء بنجاح', 'success');
+          onSaved();
+        } catch (error) {
+          onTokenError(error);
+        }
+      };
+
+      return (
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <input
+            type="text"
+            name="name"
+            value={form.name}
+            onChange={handleChange}
+            placeholder="اسم الدواء"
+            required
+            className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white"
+          />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <input
+              type="number"
+              name="quantity"
+              value={form.quantity}
+              onChange={handleChange}
+              placeholder="الكمية"
+              required
+              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white"
+            />
+            <input
+              type="text"
+              name="batch_number"
+              value={form.batch_number}
+              onChange={handleChange}
+              placeholder="رقم الدفعة"
+              required
+              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white"
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <input
+              type="date"
+              name="expire_date"
+              value={form.expire_date}
+              onChange={handleChange}
+              required
+              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white"
+            />
+            <input
+              type="number"
+              step="0.01"
+              name="price"
+              value={form.price}
+              onChange={handleChange}
+              placeholder="السعر"
+              required
+              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white"
+            />
+          </div>
+          <button
+            type="submit"
+            className="w-full rounded-2xl bg-emerald-600 px-4 py-3 font-bold text-white transition hover:bg-emerald-700"
+          >
+            حفظ الدواء
+          </button>
+        </form>
+      );
+    }
+
+    function EditMedicineModal({ medicine, onClose, onSaved, onTokenError }) {
+      const [form, setForm] = useState({
+        name: medicine.name || '',
+        quantity: medicine.quantity || '',
+        batch_number: medicine.batch_number || '',
+        expire_date: medicine.expire_date || '',
+        price: medicine.price || '',
+      });
+
+      const handleChange = (event) => {
+        const { name, value } = event.target;
+        setForm((current) => ({ ...current, [name]: value }));
+      };
+
+      const handleSubmit = async (event) => {
+        event.preventDefault();
+        try {
+          await apiFetch(`/medicines/${medicine.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              name: form.name,
+              quantity: Number(form.quantity),
+              batch_number: form.batch_number,
+              expire_date: form.expire_date,
+              price: Number(form.price),
+            }),
+          });
+          onSaved();
+          onClose();
+        } catch (error) {
+          onTokenError(error);
+        }
+      };
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-2xl rounded-[2rem] border border-emerald-100 bg-white p-6 shadow-2xl">
+            <div className="mb-5 flex items-center justify-between gap-3">
+              <h3 className="text-2xl font-bold text-slate-900">تعديل الدواء</h3>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+              >
+                إغلاق
+              </button>
+            </div>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <input
+                type="text"
+                name="name"
+                value={form.name}
+                onChange={handleChange}
+                placeholder="اسم الدواء"
+                required
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white"
+              />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <input
+                  type="number"
+                  name="quantity"
+                  value={form.quantity}
+                  onChange={handleChange}
+                  placeholder="الكمية"
+                  required
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white"
+                />
+                <input
+                  type="text"
+                  name="batch_number"
+                  value={form.batch_number}
+                  onChange={handleChange}
+                  placeholder="رقم الدفعة"
+                  required
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white"
+                />
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <input
+                  type="date"
+                  name="expire_date"
+                  value={form.expire_date}
+                  onChange={handleChange}
+                  required
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white"
+                />
+                <input
+                  type="number"
+                  step="0.01"
+                  name="price"
+                  value={form.price}
+                  onChange={handleChange}
+                  placeholder="السعر"
+                  required
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white"
+                />
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <button
+                  type="submit"
+                  className="flex-1 rounded-2xl bg-emerald-600 px-4 py-3 font-bold text-white transition hover:bg-emerald-700"
+                >
+                  حفظ التعديل
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="flex-1 rounded-2xl border border-slate-200 px-4 py-3 font-bold text-slate-700 transition hover:bg-slate-50"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    function ChangePasswordModal({ onClose, onSuccess, onTokenError }) {
+      const [form, setForm] = useState({
+        currentPassword: '',
+        newPassword: '',
+        confirmNewPassword: '',
+      });
+      const [visible, setVisible] = useState({
+        currentPassword: false,
+        newPassword: false,
+        confirmNewPassword: false,
+      });
+      const [error, setError] = useState('');
+      const [loading, setLoading] = useState(false);
+
+      const handleChange = (event) => {
+        const { name, value } = event.target;
+        setForm((current) => ({ ...current, [name]: value }));
+      };
+
+      const handleSubmit = async (event) => {
+        event.preventDefault();
+        setError('');
+
+        if (form.newPassword !== form.confirmNewPassword) {
+          setError('كلمة المرور الجديدة وتأكيدها غير متطابقين');
+          return;
+        }
+
+        setLoading(true);
+        try {
+          const data = await apiFetch('/change-password', {
+            method: 'POST',
+            body: JSON.stringify({
+              currentPassword: form.currentPassword,
+              newPassword: form.newPassword,
+            }),
+          });
+          onSuccess((data && data.message) ? data.message : 'تم تغيير كلمة المرور بنجاح');
+          onClose();
+        } catch (err) {
+          if (err.message === 'Current password is incorrect.' || err.message === 'كلمة المرور الحالية غير صحيحة') {
+            setError('كلمة المرور الحالية غير صحيحة');
+          } else {
+            onTokenError(err);
+          }
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-xl rounded-[2rem] border border-emerald-100 bg-white p-6 shadow-2xl">
+            <div className="mb-5 flex items-center justify-between gap-3">
+              <h3 className="text-2xl font-bold text-slate-900">تغيير كلمة المرور</h3>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+              >
+                إغلاق
+              </button>
+            </div>
+
+            {error && (
+              <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+                {error}
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <PasswordInput
+                name="currentPassword"
+                value={form.currentPassword}
+                onChange={handleChange}
+                placeholder="كلمة المرور الحالية"
+                visible={visible.currentPassword}
+                onToggle={() =>
+                  setVisible((current) => ({
+                    ...current,
+                    currentPassword: !current.currentPassword,
+                  }))
+                }
+                required
+              />
+              <PasswordInput
+                name="newPassword"
+                value={form.newPassword}
+                onChange={handleChange}
+                placeholder="كلمة المرور الجديدة"
+                visible={visible.newPassword}
+                onToggle={() =>
+                  setVisible((current) => ({
+                    ...current,
+                    newPassword: !current.newPassword,
+                  }))
+                }
+                required
+              />
+              <PasswordInput
+                name="confirmNewPassword"
+                value={form.confirmNewPassword}
+                onChange={handleChange}
+                placeholder="تأكيد كلمة المرور الجديدة"
+                visible={visible.confirmNewPassword}
+                onToggle={() =>
+                  setVisible((current) => ({
+                    ...current,
+                    confirmNewPassword: !current.confirmNewPassword,
+                  }))
+                }
+                required
+              />
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="flex-1 rounded-2xl bg-emerald-600 px-4 py-3 font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {loading ? 'جاري الحفظ...' : 'حفظ كلمة المرور الجديدة'}
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="flex-1 rounded-2xl border border-slate-200 px-4 py-3 font-bold text-slate-700 transition hover:bg-slate-50"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    function Dashboard({ user, onLogout, onTokenError }) {
+      const [medicines, setMedicines] = useState([]);
+      const [alerts, setAlerts] = useState([]);
+      const [lowStockMedicines, setLowStockMedicines] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState('');
+      const [successMessage, setSuccessMessage] = useState('');
+      const [toasts, setToasts] = useState([]);
+      const [editingMedicine, setEditingMedicine] = useState(null);
+      const [showChangePassword, setShowChangePassword] = useState(false);
+      const [deleteTarget, setDeleteTarget] = useState(null);
+
+      const showToast = (message, type = 'success') => {
+        const id = Date.now() + Math.random();
+        setToasts((current) => [...current, { id, message, type }]);
+        window.setTimeout(() => {
+          setToasts((current) => current.filter((toast) => toast.id !== id));
+        }, 3000);
+      };
+
+      const loadMedicines = async () => {
+        try {
+          setError('');
+          const data = await apiFetch('/medicines');
+          setMedicines(Array.isArray(data) ? data : []);
+        } catch (error) {
+          onTokenError(error);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const loadAlerts = async () => {
+        try {
+          const data = await apiFetch('/medicines/expiry-alerts');
+          setAlerts(Array.isArray(data) ? data : []);
+        } catch (error) {
+          onTokenError(error);
+        }
+      };
+
+      const loadLowStock = async () => {
+        try {
+          const data = await apiFetch('/medicines/low-stock');
+          setLowStockMedicines(Array.isArray(data) ? data : []);
+        } catch (error) {
+          onTokenError(error);
+        }
+      };
+
+      useEffect(() => {
+        loadMedicines();
+        loadAlerts();
+        loadLowStock();
+      }, []);
+
+      const handleDelete = async (medicine) => {
+        setDeleteTarget(medicine);
+      };
+
+      const confirmDelete = async () => {
+        if (!deleteTarget) return;
+
+        try {
+          await apiFetch(`/medicines/${deleteTarget.id}`, { method: 'DELETE' });
+          await loadMedicines();
+          await loadAlerts();
+          await loadLowStock();
+          setSuccessMessage('تم الحذف بنجاح');
+          showToast('تم الحذف بنجاح', 'success');
+        } catch (error) {
+          onTokenError(error);
+        } finally {
+          setDeleteTarget(null);
+        }
+      };
+
+      return (
+        <div className="min-h-screen px-4 py-6 md:px-8">
+          <div className="mx-auto max-w-7xl">
+            <header className="mb-8 rounded-[2rem] border border-emerald-100 bg-white/85 p-6 shadow-[0_25px_80px_rgba(16,185,129,0.10)] backdrop-blur">
+              <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <p className="mb-2 inline-flex rounded-full bg-emerald-100 px-3 py-1 text-sm font-semibold text-emerald-700">
+                    Daway Dashboard
+                  </p>
+                  <h1 className="text-3xl font-extrabold text-slate-900 md:text-5xl">
+                    مرحباً، {user && user.pharmacy_name ? user.pharmacy_name : 'الصيدلية'}
+                    {alerts.length > 0 && (
+                      <span className="mr-3 inline-flex items-center rounded-full bg-red-600 px-3 py-1 text-sm font-bold text-white">
+                        {alerts.length}
+                      </span>
+                    )}
+                    {lowStockMedicines.length > 0 && (
+                      <span className="mr-2 inline-flex items-center rounded-full bg-amber-500 px-3 py-1 text-sm font-bold text-white">
+                        {lowStockMedicines.length}
+                      </span>
+                    )}
+                  </h1>
+                  <p className="mt-2 text-sm leading-7 text-slate-600 md:text-base">
+                    هذه لوحة الإدارة الخاصة بك. كل البيانات مرتبطة بحسابك فقط.
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <button
+                    onClick={() => setShowChangePassword(true)}
+                    className="rounded-2xl border border-emerald-200 bg-white px-5 py-4 font-bold text-emerald-700 transition hover:bg-emerald-50"
+                  >
+                    تغيير كلمة المرور
+                  </button>
+                  <button
+                    onClick={onLogout}
+                    className="rounded-2xl bg-slate-900 px-5 py-4 font-bold text-white transition hover:bg-slate-800"
+                  >
+                    تسجيل خروج
+                  </button>
+                </div>
+              </div>
+            </header>
+
+            {error && (
+              <div className="mb-6 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+                {error}
+              </div>
+            )}
+
+            {successMessage && (
+              <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
+                {successMessage}
+              </div>
+            )}
+
+            <div className="pointer-events-none fixed bottom-4 left-4 z-[60] flex w-full max-w-sm flex-col gap-3 px-4 sm:px-0">
+              {toasts.map((toast) => (
+                <div
+                  key={toast.id}
+                  className={`pointer-events-auto rounded-2xl border px-4 py-3 shadow-lg transition ${
+                    toast.type === 'error'
+                      ? 'border-red-200 bg-red-50 text-red-700'
+                      : 'border-green-200 bg-green-50 text-green-700'
+                  }`}
+                >
+                  <div className="text-sm font-semibold">{toast.message}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mb-6 grid gap-4 md:grid-cols-2">
+              <div className="rounded-[1.5rem] border border-emerald-100 bg-white p-5 shadow-lg shadow-emerald-100/50">
+                <div className="text-sm text-slate-500">الأدوية التي شارف مخزونها على النفاد</div>
+                <div className="mt-2 flex items-end justify-between gap-4">
+                  <div className="text-4xl font-extrabold text-slate-900">{lowStockMedicines.length}</div>
+                  <div className="rounded-full bg-amber-100 px-3 py-1 text-sm font-bold text-amber-700">≤ 5</div>
+                </div>
+              </div>
+              <div className="rounded-[1.5rem] border border-emerald-100 bg-white p-5 shadow-lg shadow-emerald-100/50">
+                <div className="text-sm text-slate-500">الأدوية القريبة من الانتهاء</div>
+                <div className="mt-2 flex items-end justify-between gap-4">
+                  <div className="text-4xl font-extrabold text-slate-900">{alerts.length}</div>
+                  <div className="rounded-full bg-red-100 px-3 py-1 text-sm font-bold text-red-700">90 يوم</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-6 lg:grid-cols-[1fr_1.35fr]">
+              <section className="rounded-[2rem] border border-emerald-100 bg-white p-6 shadow-lg shadow-emerald-100/60">
+                <div className="mb-5 flex items-center justify-between gap-3">
+                  <h2 className="text-2xl font-bold text-slate-900">إضافة دواء جديد</h2>
+                  <button
+                    onClick={loadMedicines}
+                    className="rounded-2xl border border-emerald-200 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-50"
+                  >
+                    تحديث
+                  </button>
+                </div>
+                <MedicineForm
+                  onSaved={loadMedicines}
+                  onTokenError={onTokenError}
+                  onToast={showToast}
+                />
+              </section>
+
+              <section className="rounded-[2rem] border border-emerald-100 bg-white p-6 shadow-lg shadow-emerald-100/60">
+                <div className="mb-5 flex items-center justify-between gap-3">
+                  <h2 className="text-2xl font-bold text-slate-900">تنبيهات الصلاحية</h2>
+                  <button
+                    onClick={loadAlerts}
+                    className="rounded-2xl border border-emerald-200 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-50"
+                  >
+                    تحديث
+                  </button>
+                </div>
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <h3 className="text-lg font-bold text-red-800">تنبيهات الصلاحية</h3>
+                      <span className="rounded-full bg-red-600 px-3 py-1 text-xs font-bold text-white">
+                        {alerts.length}
+                      </span>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full border-separate border-spacing-y-2">
+                        <thead>
+                          <tr className="text-right text-xs text-red-700">
+                            <th className="px-3 py-1">الاسم</th>
+                            <th className="px-3 py-1">الكمية</th>
+                            <th className="px-3 py-1">الانتهاء</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {alerts.length === 0 ? (
+                            <tr>
+                              <td colSpan="3" className="px-3 py-8 text-center text-sm text-red-700">
+                                لا توجد تنبيهات صلاحية حالياً.
+                              </td>
+                            </tr>
+                          ) : (
+                            alerts.map((medicine) => (
+                              <tr key={medicine.id} className="bg-white text-sm shadow-sm">
+                                <td className="px-3 py-2 font-semibold text-slate-900">
+                                  <span className="ml-2 inline-flex text-red-500">⚠️</span>
+                                  {medicine.name}
+                                </td>
+                                <td className="px-3 py-2">{medicine.quantity}</td>
+                                <td className="px-3 py-2 font-semibold text-rose-700">{medicine.expire_date}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <h3 className="text-lg font-bold text-amber-800">تنبيهات الكمية الحرجة</h3>
+                      <span className="rounded-full bg-amber-500 px-3 py-1 text-xs font-bold text-white">
+                        {lowStockMedicines.length}
+                      </span>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full border-separate border-spacing-y-2">
+                        <thead>
+                          <tr className="text-right text-xs text-amber-700">
+                            <th className="px-3 py-1">الاسم</th>
+                            <th className="px-3 py-1">الكمية</th>
+                            <th className="px-3 py-1">التشغيلة</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {lowStockMedicines.length === 0 ? (
+                            <tr>
+                              <td colSpan="3" className="px-3 py-8 text-center text-sm text-amber-700">
+                                لا توجد أدوية بمخزون حرج حالياً.
+                              </td>
+                            </tr>
+                          ) : (
+                            lowStockMedicines.map((medicine) => (
+                              <tr key={medicine.id} className="bg-white text-sm shadow-sm">
+                                <td className="px-3 py-2 font-semibold text-slate-900">{medicine.name}</td>
+                                <td className="px-3 py-2 font-bold text-amber-700">{medicine.quantity}</td>
+                                <td className="px-3 py-2 text-slate-600">{medicine.batch_number}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <section className="mt-6 rounded-[2rem] border border-emerald-100 bg-white p-6 shadow-lg shadow-emerald-100/60">
+              <div className="mb-5 flex items-center justify-between gap-3">
+                <h2 className="text-2xl font-bold text-slate-900">قائمة الأدوية</h2>
+                <button
+                  onClick={loadMedicines}
+                  className="rounded-2xl border border-emerald-200 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-50"
+                >
+                  تحديث
+                </button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full border-separate border-spacing-y-3">
+                  <thead>
+                    <tr className="text-right text-sm text-slate-500">
+                      <th className="px-4 py-2">الاسم</th>
+                      <th className="px-4 py-2">الكمية</th>
+                      <th className="px-4 py-2">رقم الدفعة</th>
+                      <th className="px-4 py-2">تاريخ الانتهاء</th>
+                      <th className="px-4 py-2">السعر</th>
+                      <th className="px-4 py-2">إجراء</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading ? (
+                      <tr>
+                        <td colSpan="6" className="px-4 py-10 text-center text-slate-500">
+                          جاري تحميل البيانات...
+                        </td>
+                      </tr>
+                    ) : medicines.length === 0 ? (
+                      <tr>
+                        <td colSpan="6" className="px-4 py-10 text-center text-slate-500">
+                          لا توجد أدوية بعد.
+                        </td>
+                      </tr>
+                    ) : (
+                      medicines.map((medicine) => (
+                          <tr key={medicine.id} className="rounded-2xl bg-slate-50 text-sm shadow-sm">
+                          <td className="px-4 py-4 font-semibold text-slate-900">{medicine.name}</td>
+                          <td className="px-4 py-4">{medicine.quantity}</td>
+                          <td className="px-4 py-4">{medicine.batch_number}</td>
+                          <td className="px-4 py-4">{medicine.expire_date}</td>
+                          <td className="px-4 py-4">{medicine.price}</td>
+                          <td className="px-4 py-4">
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                onClick={() => setEditingMedicine(medicine)}
+                                className="rounded-xl bg-emerald-600 px-3 py-2 font-semibold text-white transition hover:bg-emerald-700"
+                              >
+                                تعديل
+                              </button>
+                              <button
+                                onClick={() => setDeleteTarget(medicine)}
+                                className="rounded-xl bg-rose-500 px-3 py-2 font-semibold text-white transition hover:bg-rose-600"
+                              >
+                                حذف
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            {editingMedicine && (
+              <EditMedicineModal
+                medicine={editingMedicine}
+                onClose={() => setEditingMedicine(null)}
+                onSaved={loadMedicines}
+                onTokenError={onTokenError}
+              />
+            )}
+
+            {deleteTarget && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
+                <div className="w-full max-w-md rounded-[2rem] border border-slate-200 bg-white p-6 shadow-2xl">
+                  <h3 className="text-2xl font-bold text-slate-900">تأكيد الحذف</h3>
+                  <p className="mt-3 text-sm leading-7 text-slate-600">
+                    هل أنت متأكد من حذف هذا الدواء؟
+                  </p>
+                  <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+                    <button
+                      type="button"
+                      onClick={confirmDelete}
+                      className="flex-1 rounded-2xl bg-red-600 px-4 py-3 font-bold text-white transition hover:bg-red-700"
+                    >
+                      نعم، احذف
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteTarget(null)}
+                      className="flex-1 rounded-2xl border border-slate-200 px-4 py-3 font-bold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      إلغاء
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {showChangePassword && (
+              <ChangePasswordModal
+                onClose={() => setShowChangePassword(false)}
+                onSuccess={(message) => {
+                  setSuccessMessage(message);
+                  setError('');
+                  showToast(message, 'success');
+                }}
+                onTokenError={onTokenError}
+              />
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [token, setToken] = useState(readToken());
+      const [user, setUser] = useState(readUser());
+
+      const handleTokenError = (error) => {
+        if (
+          error.message === 'Invalid or expired token.' ||
+          error.message === 'Authorization token is required.'
+        ) {
+          clearSession();
+          setToken(null);
+          setUser(null);
+        }
+      };
+
+      useEffect(() => {
+        const storedToken = readToken();
+        if (!storedToken) return;
+
+        try {
+          const decoded = parseJwt(storedToken);
+          const restoredUser = {
+            id: decoded.userId || decoded.user_id || null,
+            email: decoded.email || '',
+            pharmacy_name: decoded.pharmacy_name || (readUser() && readUser().pharmacy_name) || '',
+          };
+          setToken(storedToken);
+          setUser(restoredUser);
+          localStorage.setItem(USER_KEY, JSON.stringify(restoredUser));
+        } catch (error) {
+          clearSession();
+          setToken(null);
+          setUser(null);
+        }
+      }, []);
+
+      const handleAuthenticated = (nextUser, nextToken) => {
+        setUser(nextUser);
+        setToken(nextToken);
+      };
+
+      const handleLogout = () => {
+        clearSession();
+        setToken(null);
+        setUser(null);
+      };
+
+      if (!token) {
+        return <AuthScreen onAuthenticated={handleAuthenticated} />;
+      }
+
+      return (
+        <Dashboard
+          user={user}
+          onLogout={handleLogout}
+          onTokenError={handleTokenError}
+        />
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

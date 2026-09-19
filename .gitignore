@@ -1,0 +1,10 @@
+.env
+.env.*
+node_modules/
+*.db
+*.log
+backups/
+auth-server.err
+server-err.log
+server-out.log
+server-output.log

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>تقرير تدقيق تقني لمشروع داواي</title>
+<style>
+    body {font-family: "Tahoma", sans-serif; line-height:1.6; margin:20px; color:#222;}
+    h1, h2, h3 {color:#1a365d;}
+    table {width:100%; border-collapse:collapse; margin-bottom:20px;}
+    th, td {border:1px solid #ccc; padding:8px; text-align:right;}
+    th {background-color:#e2e8f0;}
+    tr:nth-child(even) {background-color:#f7fafc;}
+    pre {background:#f8f9fa; padding:10px; overflow:auto; border-radius:4px;}
+    ul {margin-right:20px;}
+</style>
+</head>
+<body>
+<h1>تقرير تدقيق تقني لمشروع داواي</h1>
+<p><em>بناء على تخطيط الملفات، ملف <code>package.json</code>، ومخطط قاعدة البيانات في <code>server.cjs</code>.</em></p>
+
+<h2>1. بنية المستودع (العناصر الرئيسية)</h2>
+<pre>
+daway-prod/                ← الواجهة الأمامية + الخلفية للإنتاج (Vite/React + Node)
+ ├─ src/                    ← مكونات React (لوحات القيادة، النوافذ، المساعدات)
+ ├─ public/                 ← أصول ثابتة
+ ├─ dist/                   ← المخرجات المبنية
+ ├─ backups/                ← نُسخ احتياطية أُنتجت تلقائياً لـ SQLite
+ ├─ server.cjs              ← واجهة برمجة تطبيقات Express (قابلة للتشغيل مع SQLite)
+ ├─ package.json            ← تبعيات Node/Vite والنصوص
+ └─ vite.config.js          ← ضبط Vite + React + Tailwind
+
+daway-mvp/                 ← نسخة سابقة/مُبسّطة (JavaScript عادي، server.js)
+ ├─ js/                     ← الواجهة الأمامية بـ JavaScript عادي
+ └─ server.js               ← واجهة برمجة تطبيقات Express بسيطة
+
+المجلد الجذر/                ← ملفات القفل
+</pre>
+
+<h2>2. المكدس التكنولوجي وهندسة النظام</h2>
+<ul>
+<li><strong>الواجهة الأمامية</strong>
+<ul>
+<li>الإطار: React 19 (عبر Vite)</li>
+<li>التنسيق: Tailwind CSS 4 (عبر <code>@tailwindcss/vite</code>)</li>
+<li>الإدارة الحالة: React <code>useState</code>/<code>useEffect</code> (بدون مكتبة خارجية)</li>
+<li>الاتصال: غلاف مخصّص <code>api.js</code> حول <code>fetch</code></li>
+<li>البناء: أوامر <code>vite dev | build | preview</code></li>
+</ul>
+</li>
+<li><strong>الخلفية</strong>
+<ul>
+<li>وقت التشغيل: Node.js (Express 5)</li>
+<li>نمط واجهة برمجة التطبيقات: REST (JSON)</li>
+<li>المصادقة: JWT (<code>jsonwebtoken</code>) + bcryptjs لتشفير كلمات المرور</li>
+<li>الوسيط الوسيط: <code>cors</code>, <code>helmet</code>, <code>compression</code>, <code>express-rate-limit</code></li>
+<li>قاعدة البيانات: SQLite 3 (الوحدة <code>sqlite3</code>) – قائمة على الملف، متوافقة مع ACID</li>
+<li>النصوص: <code>node server.cjs</code> (تبدأ الخادم وتزرع بيانات تجريبية)</li>
+</ul>
+</li>
+<li><strong>قاعدة البيانات</strong> (مقتطفة من <code>server.cjs</code>)
+<ul>
+<li>مستخدمون (<code>users</code>) – id, pharmacy_name, email (unique), password_hash, role, owner_id, timestamps</li>
+<li>صيدليات (<code>pharmacies</code>) – id, owner_id (FK → users), name, license_number, address</li>
+<li>أدوية (<code>medicines</code>) – id, user_id, name, quantity, batch_number, expire_date, price, supplier_id, category, barcode, cost_price</li>
+<li>مخزون الأدوية (<code>medicine_inventory</code>) – id, pharmacy_id (FK), medicine_id (FK), stock_quantity, price</li>
+<li>موردون ((include remaining tables)
+</li>
+</ul>
+</li>
+</ul>
+
+<h2>3. الوحدات الأساسية والمميزات</h2>
+<table>
+<thead>
+<tr><th>الوحدة</th><th>الغرض</th><th>أمثلة على نقاط نهاية API</th></tr>
+</thead>
+<tbody>
+<tr><td>المصادقة</td><td>تسجيل الدخول، التسجيل، تغيير كلمة المرور، التحقق من الأدوار</td><td>POST /api/login, POST /api/register, POST /api/change-password</td></tr>
+<tr><td>المستخدمون</td><td>CRUD للمشرفين، مالكي الصيدليات، الموظفين، العملاء</td><td>GET /api/users, POST /api/users, PUT /api/users/:id, DELETE /api/users/:id</td></tr>
+<tr><td>الأدوية</td><td>كتالوج وإدارة المخزون (مقيد بالمستخدم)</td><td>GET /api/medicines, POST /api/medicines, PUT /api/medicines/:id, DELETE /api/medicines/:id</td></tr>
+<tr><td>الطلبات/المبيعات</td><td>طلبات العملاء، مبيعات الصيدليات، بنود الطلبات</td><td>GET /api/owner/sales, GET /api/owner/sales/summary, POST /api/customer/order, POST /api/customer/order-batch</td></tr>
+<tr><td>الإشعارات</td><td>تنبيهات ذكية (مستحضرات منتهية الصلاحية/مخزون منخفض)</td><td>GET /api/owner/notifications</td></tr>
+<tr><td>إدارة الموظفين</td><td>CRUD خاص بالموظفين لمالك الصيدلية</td><td>GET /api/owner/staff, POST /api/owner/staff, PUT /api/owner/staff/:id, DELETE /api/owner/staff/:id</td></tr>
+<tr><td>المورد</td><td>كتالوج الموردين وعمليات طلب الشراء</td><td>GET /api/suppliers, POST /api/supplier/medicines, GET /api/supplier/:id/medicines, POST /api/pos/order</td></tr>
+<tr><td>المشرف</td><td>إشراف عام على تسجيل المستخدمين和药店注册</td><td>GET /api/admin/pending-pharmacies, PUT /api/admin/approve-pharmacy/:id, PUT /api/admin/reject-pharmacy/:id, GET /api/admin/sales</td></tr>
+<tr><td>لوحة القيادة</td><td>إحصائيات مجمّعة + رسم بياني (تم إضافته)</td><td>GET /api/owner/sales/summary (الآن يحتوي على مبيعات يومية)</td></tr>
+<tr><td>تسجيل الصيدليات</td><td>طريقة طلب عام (<code>/api/pharmacy/register</code>)</td><td>POST /api/pharmacy/register</td></tr>
+</tbody>
+</table>
+
+<h2>4. حالة التنفيذ الحالي (ما تم بناؤه مقابل ما يفتقد)</h2>
+<table>
+<thead>
+<tr><th>المجال</th><th>ما تم بناؤه</th><th>ما غالبًا ما يفتقد/ثغرات (مقارنة بتطبيقات المؤسسات)</th></tr>
+</thead>
+<tbody>
+<tr><td>ال CRUD الأساسي</td><td>المستخدمون، الأدوية، الطلبات، الموظفين، الموردون، التسجيلات</td><td>-</td></tr>
+<tr><td>المصادقة</td><td>تسجيل الدخول باستخدام JWT، تشفير كلمة المرور بـ bcrypt، فحص الأدوار</td><td>لا توجد رموز تجديد دورية؛ لا تأكيد عبر البريد الإلكتروني أو إعادة تعيين كلمة مرور؛ لا مصادقة ثنائية أو تسجيل دخول اجتماعي.</td></tr>
+<tr><td>الإذن</td><td>Middleware مبني على الأدوار؛ إخفاء أزرار الحذف/التحرير للموظفين في الواجهة</td><td>لا توجد صلاحيات دقيقة (مثلاً “يمكن حذف طلبات خاصة بي فقط”)؛ لا توجد ضوابط مبنية على السمات (ABAC).</td></tr>
+<tr><td>تحقق من صحة البيانات</td><td>فحوصات يدوية في معالجات الطرق</td><td>لا توجد أداة تحقق من صحة السيرفر (Joi/Zod) → خطر عدم اتساق الأحمال؛ عدم وجود تنقية داخلية تتجاوز التحقق من الحضور.</td></tr>
+<tr><td>معالجة الأخطاء</td><td>try/catch → إرجاع 500 مع رسالة؛ أضيف <code>console.error</code> للتشخيص</td><td>لا وجود لخدمة سجل مركزي (مثلاً Winston، Sentry)؛ عدم وجود معرّفات ارتباط لتتبع الطلب.</td></tr>
+<tr><td>الأداء</td><td>SQLite مع مفاتيح أولية/أجنبية (فهرسة ضمنية)؛ gzip؛ تقيد معدل الطلبات</td><td>طبقة قراءة/ذاكرة مؤقتة غير موجودة (Redis) للتقارير الثقيلة؛ لا وجود لتخزين على مستوى الاستعلام (مثل عروض مادية للالخصاص); لا وجود لتقسيم القوائم الكبيرة (الأدوية، الطلبات).</td></tr>
+<tr><td>المرصاد</td><td>سجلات وحدة التحكم الأساسية، إشعارات النسخ الاحتياطي</td><td>لا يوجد سجل منظم (JSON)؛ لا نقطة نهاية لمقاييس (Prometheus)؛ لا فحص صحة يتجاوز <code>/status</code>.</td></tr>
+<tr><td>DevOps</td><td>نص النسخ الاحتياطي، بناء Vite، تشغيل Node</td><td>لا يوجد ملف Docker / docker‑compose؛ لا مسار CI/CD (GitHub Actions)؛ لا بنية تحتية كرمز (Terraform).</td></tr>
+<tr><td>الاختبار</td><td>لا توجد اختبارات مكتشفة</td><td>لا توجد اختبارات وحدة/تكامل (Jest, Vitest)؛ لا توجد اختبارات من طرف إلى طرف (Cypress/Playwright)؛ لا فرض لتغطية الاختبار.</td></tr>
+<tr><th>توثيق API</th><td>لا يوجد</td><td>لا توجد مواصفة OpenAPI/Swagger؛ لا توجد وثائق تفاعلية (Swagger UI).</td></tr>
+<tr><td>هياكل الواجهة الأمامية</td><td>مستوى المكونات، حالات محلية، هوائيات مخصّصة ضمنية</td><td>لا يوجد مدير حالة عالمية (Redux/Zustand) – قد يتسبب ذلك في مشاكل於 التوسع؛ لا يتم تحميل الأجزاء الثقيلة (مثل المخططات) عند الطلب؛ لا توجد مكتبة تحقق من النماذج (react-hook-form / Yup).</td></tr>
+<tr><td>الواجهة وتجربة المستخدم</td><td>صفحات مصممة بـ Tailwind، جداول عرض، نوافذ منبثقة، تنبيهات، رسم بياني خطّي</td><td>لا يوجد تدقيق للوصولية (ARIA، تنقل لوحة المفاتيح)؛ لا يوجد وضع داكن؛ لا يوجد دوْلة (العربية موجودة لكن لا يتم تكييفها بالكامل).</td></tr>
+<tr><td>الأمان</td><td>Helmet, CORS, تقييد المعدل، أسرار JWT في .env، كلمات المرور مُشفّرة</td><td>لا توجد إعدادات HttpOnly وSecure لملفات تعريف الارتباط (إن وُجدت)؛ لا توجد حماية من هجمات CSRF؛ لا توجد مسح للاعتماديات (npm audit) في سلسلة التكامل؛ لا يوجد اختبار لتعريض المسارات للأدوار (محاولة موظف accessing مسار مالك).</td></tr>
+<tr><td>سلامة البيانات</td><td>تم تمكين قيود المفاتيح الأجنبية (<code>PRAGMA foreign_keys=ON</code>)</td><td>لا وجود لآليات ترحيل تلقائية (Knex, Sequelize) – تغييرات المخطط يدويّة؛ لا وجود لتدقيق للمسح أو الحذف اللين؛ لا يوجد تشفير في حالة الاستراحة لـ SQLite (يعتمد على تشفير ملف نظام التشغيل فقط).</td></tr>
+</tbody>
+</table>
+
+<h2>5. توصيات الأمان (أولوية)</h2>
+<ol>
+<li>إدخال دورة تجديد رمزrefresh – تخزين رموزrefresh مشفّرة في قاعدة البيانات وإصدار رموز وصول قصيرة العمر.</li>
+<li>إضافة تحقق شامل من الصحة – اعتماد مكتبة مثل Zod أو Joi لأجسام جميع الطلبات وتنظيف السلاسل لتفادي حقن.</li>
+<li>تنفيذ رموز CSRF – للاعتماد المستند على ملفات تعريف الارتباط (أو الاعتماد على رأس Authorization: Bearer فقط كما هو معمول به حالياً).</li>
+<li>تمكين السجل المنظم (winston/pino) مع معرّفات طلب؛ إرساله إلى خدمة خارجية (ELK, Datadog, إلخ).</li>
+<li>إضافة رؤوس أمان تتجاوز Helmet: Content‑Security‑Policy, Referrer‑Policy, Permissions‑Policy.</li>
+<li>تشغيل تدقيق للاعتماديات (npm audit, npm outdated) في مسار التكامل المستمر والحفاظ على ملفات القفل محدثة.</li>
+<li>النظر في الانتقال إلى PostgreSQL للتوسع متعدد المستخدمين، أمان على مستوى الصفوف، وأدوات أفضل.</li>
+<li>فرض HTTPS في الإنتاج (عبر وكيل عكسي – Nginx/Caddy) وتعيين علم Secure على ملفات تعريف الارتباط إذا استُعملت إذا استُخدمت.</li>
+<li>تطبيق قفل الحساب بعد N محاولات دخول فاشلة.</li>
+</ol>
+
+<h2>6. توصيات الأداء</h2>
+<ol>
+<li>إضافة التقسيم أو مؤشرات kursor للقوائم الكبيرة مثل <code>/medicines</code>, <code>/orders</code>, <code>/users</code> لتجنب تحميل جداول ضخمة.</li>
+<li>تخزين الملخصات المجمّعة (مثل <code>/api/owner/sales/summary</code>) لفترة قصيرة باستخدام ذاكرة مؤقتة (Redis أو ذاكرة داخلية typu LRU) لأنّ الطلب يجمع جداول متعدّدة.</li>
+<li>إنشاء فهارس جزئية على أعمدةrea تُستخدم بشكل متكرر في الفلاتر: مثال <code>owner_id</code>, <code>status = 'pending'</code>, نطاقات تواريخ الصلاحية.</li>
+<li>نقل المهام الثقيلة (تصدير CSV/PDF) إلى عمال خلفية (مثلاً BullMQ) لتحرير سلاسل API.</li>
+<li>استخدام مخطط استعلامات SQLite – تشغيل <code>EXPLAIN QUERY PLAN</code> على الاستعلامات البطيئة مع نمو البيانات.</li>
+<li>اعتبار تجميع الاتصالات (better‑sqlite3) إذا ارتفعت الحركة المتزامنة.</li>
+<li>تمكين HTTP/2 عبر وكيل عكسي لتحسين تعددية الأصول الثابتة.</li>
+<li>فحص حجم الحزمة – راجع مخرجات <code>vite build</code>؛ حمّل المخططات الثقيلة (recharts) فقط عند الحاجة.</li>
+<li>استخدام ETags و <code>Cache‑Control</code> للأصول الثابتة (Vite فعلاً efectu ذلك في بيئة الإنتاج).</li>
+<li>مراقبة حجم قاعدة البيانات – جدولة عملية <code>VACUUM</code> عند حدوث عمليات حذف كثيرة.</li>
+</ol>
+
+<h2>7. الخلاصة والخطوات القادمة</h2>
+<p>
+مشروع داواي‑MVP/Prod يقدم نموذج عمل وظيفي لإدارة الصيدليات يتضمن:
+</p>
+<ul>
+<li>واجهة برمجة تطبيقات REST واعية بالأدوار مدعومة بـ SQLite.</li>
+<li>تطبيق صفحة واحدة React/Vite مع تنسيق Tailwind.</li>
+<li>التدفقات الأساسية للأعمال (الوصف، الطلب، المخزون، التوظيف).</li>
+<li>الميزات المضافة حديثاً: نظام الإنذارات الذكية، تطبيق صارم للتحكم المستند إلى الأدوار، ورسم بياني للمبيعات اليومية.</li>
+</ul>
+<p>
+للتحوّل من نموذج أولي يعمل إلى حل SaaS جاهز للإنتاج، يجب الانتباه إلى المجالات التالية:
+</p>
+<ul>
+<li><strong>تصلب الأمان</strong> – تجديد رموز الدخول، تحقق من الصحة، تسجيل منسق، رؤوس أمان قوية.</li>
+<li><strong>المراقبة والموثوقية</strong> – سجلات منظمة، مقاييس، التحقق من النسخ الاحتياطي.</li>
+<li><strong>قابلية التوسع</strong> – التقسيم، التخزين المؤقت، احتمال الترحيل إلى قاعدة بيانات أكثر قوة.</li>
+<li><strong>تجربة المطور</strong> – خطوط دمج ونشر مستمر، اختبارات، تبني TypeScript، مواصفات OpenAPI.</li>
+<li><strong>الامتثال وتجربة المستخدم</strong> – إمكانية الوصول، مسارات تدقيق، دوْلة، عرض كثيف للبيانات.</li>
+</ul>
+<p>
+هذه الخطوات ستوفّر أساساً متيناً لتوسيع الميزات المستقبلية مثل الوصفات الإلكترونية، مطالبات التأمين، شبكة صيدليات متعددة، ولوحات تحليلية متقدمة.
+</p>
+</body>
+</html>
