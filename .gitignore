@@ -1,10 +1,32 @@
+# Secrets — .env.example is the committed template
 .env
 .env.*
+!.env.example
+
+# Dependencies and build output
 node_modules/
+dist/
+dist-ssr/
+
+# Databases, including WAL/journal side files and any copies or backups.
+# These hold users' emails and password hashes: never commit them.
 *.db
-*.log
+*.db-*
+*.db.*
+*.sqlite
+*.sqlite3
 backups/
+
+# Uploaded payment receipts (customer financial documents)
+uploads/
+
+# Logs
+*.log
+logs/
 auth-server.err
-server-err.log
-server-out.log
-server-output.log
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/launch.json
