@@ -1,178 +1,59 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code working in this repository.
 
-## Project Overview
+## What this is
 
-This is a pharmacy management SaaS application called "Daway" with two main versions:
-- `daway-mvp`: A simpler Node.js/Express backend with SQLite database
-- `daway-prod`: A React/Vite frontend with role-based dashboards
+**Daway (دواي)** — a Sudanese pharmacy platform: patients search medicines across approved pharmacies and order with Bankak payment; pharmacies manage stock, staff, POS sales and incoming orders; admins approve pharmacies and manage users; suppliers publish a wholesale catalog.
 
-The application implements Role-Based Access Control (RBAC) with five user roles:
-1. **Admin** - System-wide management
-2. **Pharmacy Owner** - Pharmacy-specific management including staff
-3. **Pharmacy Staff** - Limited pharmacy operations
-4. **Supplier** - Medicine supply management
-5. **Customer** - Medicine purchasing
+One app, one repo root:
+- `server.cjs` — Express 5 API + SQLite (`daway.db`, created on first run). In production it also serves the built SPA from `dist/`.
+- `src/` — React 19 + Vite 8 + Tailwind 4 SPA, Arabic / RTL throughout.
 
-## Development Setup
+There is no separate MVP any more; the old vanilla-JS copies were removed (they remain in git history).
 
-### Common Commands
+## Commands
 
-**For daway-mvp (backend):**
 ```bash
-# Install dependencies
 npm install
-
-# Start the server
-npm start
-# or
-node server.js
-
-# Server runs on http://localhost:5000
+npm run server   # API on :5000 (needs .env — see .env.example)
+npm run dev      # Vite on :3000, proxies /api to :5000
+npm run build    # production bundle into dist/
+npm start        # API + built SPA on one port
+npm run lint     # oxlint over src/ and server.cjs
 ```
 
-**For daway-prod (frontend):**
-```bash
-# Install dependencies
-npm install
+Required env: `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` (server exits without them). Optional: `SEED_DEMO_DATA=true` (dev only — demo accounts with password 123456, reset every boot), `VITE_ENABLE_OFFLINE_MOCK=true` (dev only — localStorage fallback when the API is down; never logs anyone in).
 
-# Start development server
-npm run dev
+## Roles and data scoping
 
-# Build for production
-npm run build
+Roles live only in `users.role`: `admin`, `pharmacy_owner`, `pharmacy_staff`, `supplier`, `customer`. There are no hard-coded admin emails.
 
-# Preview production build
-npm run preview
-```
+- A **pharmacy is its owner's user row**; `users.owner_id` = own id for owners, the owner's id for staff, NULL otherwise. `medicines.owner_id` and `orders.pharmacy_id` hold that owner id. `users.pharmacy_name` doubles as the display name for every role.
+- `verifyToken` re-reads the user row on every request, so suspension (`status = 'suspended'`), deletion and role changes apply immediately. The JWT proves identity only.
+- Public `/api/register` always creates a **customer**. Pharmacies apply via `/api/pharmacy/register` (admin approves). Staff are created by their owner; suppliers/admins by an admin.
+- 401 = session invalid (client logs out). 403 = not allowed for this action (client shows the message, stays logged in). Keep that distinction.
 
-### Environment Variables
+## Rules that must not regress
 
-**daway-mvp:**
-Create `.env` file with:
-```
-PORT=5000
-JWT_SECRET=your_secret_key_here
-```
+- **Stock changes go through `withTransaction`** (second SQLite connection, queued, `BEGIN IMMEDIATE`) and decrement with `UPDATE … SET quantity = quantity - ? WHERE … AND quantity >= ?`, checking `changes`. Never read-then-write stock, and never `BEGIN` on the shared `db` connection.
+- **Expired or out-of-stock medicine is never sold**: the public catalog, `/api/customer/medicines`, both customer order routes and POS all enforce `date(expire_date) >= date('now')`.
+- **The public catalog (`/api/catalog/*`) never exposes** cost price, barcode, batch, supplier or exact quantity.
+- **Receipts**: stored under `uploads/receipts/` (git-ignored) with a generated name; type decided by magic bytes; served only to the order's customer, its pharmacy, or an admin. Upload never marks an order paid — the pharmacy confirms via `PATCH /api/orders/:id/payment`.
+- Order lifecycle: `pending → completed | cancelled` (cancel restores stock; customer may cancel own pending order). Payment: `unpaid → pending_review → paid | rejected` (re-upload allowed until paid).
+- Passwords ≥ 8 characters everywhere (`passwordProblem`).
+- Never commit `*.db*`, `.env`, `uploads/`, or SQL files containing password hashes.
 
-**daway-prod:**
-Create `.env` file with:
-```
-VITE_API_BASE=  # Leave empty for localStorage mock mode, or set to backend URL for real API
-```
+## Frontend conventions
 
-## Code Architecture
+- All server calls go through `src/api.js` (`apiFetch` / grouped `api.*`). Same-origin by default; `VITE_API_BASE` only for a separate API host.
+- Money and dates: `formatCurrency` / `formatDate` / `formatDateTime` from `src/formatCurrency.js` (ج.س, Western digits). Don't call `toLocaleString` directly.
+- Order/payment labels: `src/orderStatus.js` + `src/StatusBadge.jsx`. Sudan's states: `src/data/sudanStates.js`.
+- `src/data/mockData.ts` feeds only the dev offline mock — public pages must not import it.
+- Dashboard pattern: `src/Dashboard.jsx` switches on `user.role`; each dashboard receives `user`, `onLogout`, `onTokenError` and reports errors with `handleApiError`.
 
-### Backend Structure (daway-mvp)
-- `server.js` - Main Express server with all API endpoints
-- Database: SQLite (`daway.db`) with automatic table creation
-- Automatic backups: Daily backups stored in `/backups` directory
-- Authentication: JWT-based with middleware in `authenticateToken` function
-- Key tables: `users`, `pharmacies`, `medicines`
+## Known gaps (not yet built)
 
-### Frontend Structure (daway-prod)
-- `src/main.jsx` - Application entry point
-- `src/App.jsx` - Main App component handling authentication routing
-- `src/api.js` - Unified API service with mock/localStorage fallback
-- `src/components/` - Role-specific dashboards and shared components
-- `src/hooks/` - Custom React hooks (if any)
-- `src/utils/` - Utility functions like `formatCurrency.js`, `medicineHelpers.js`
-
-### Role-Based Access Control
-RBAC is implemented in:
-- Frontend: `src/Dashboard.jsx` routes users to role-specific dashboards based on `user.role`
-- Backend: API endpoints are protected by checking user roles and ownership (via `user_id`)
-- Each dashboard (`AdminDashboard.jsx`, `PharmacyOwnerDashboard.jsx`, etc.) implements role-specific functionality
-
-### Key Features by Role
-
-**Admin:**
-- Manage all medicines across all pharmacies
-- Approve/reject pharmacy registration requests
-- Manage all users
-- View system-wide sales and analytics
-
-**Pharmacy Owner:**
-- Manage pharmacy's medicines
-- Manage pharmacy staff
-- View pharmacy-specific sales and reports
-- Set up supplier relationships
-
-**Pharmacy Staff:**
-- View and manage assigned pharmacy's medicines
-- Process sales
-- View limited reports
-
-**Supplier:**
-- Manage their medicine catalog
-- View purchase orders
-
-**Customer:**
-- Browse available medicines from pharmacies
-- Add to cart and checkout
-- View order history
-
-## Development Guidelines
-
-### Making Changes
-1. **Backend Changes**: Modify `daway-mvp/server.js` for API changes
-2. **Frontend Changes**: Modify files in `daway-prod/src/` 
-3. **API Contract**: Ensure frontend `api.js` matches backend endpoints
-4. **Role Permissions**: When adding new features, consider which roles should have access
-5. **Data Consistency**: Remember that medicines are scoped to `user_id` for isolation
-
-### Testing
-- Manual testing: Start both servers and test end-to-end flows
-- Backend: Test API endpoints directly with tools like curl or Postman
-- Frontend: Test UI interactions and role-based access
-- Mock API: The frontend uses localStorage mock by default; set `VITE_API_BASE` to test against real backend
-
-### File Organization
-- Keep component files small and focused
-- Place shared utilities in appropriate utility files
-- Follow existing code style and patterns
-- For new pages/components, follow the established dashboard patterns
-
-### Database Schema
-Key tables in SQLite:
-- `users`: id, pharmacy_name, email, password_hash, role, owner_id, created_at
-- `pharmacies`: id, name, email
-- `medicines`: id, user_id, name, quantity, batch_number, expire_date, price
-
-## Common Tasks
-
-### Adding a New API Endpoint
-1. Add route in `daway-mvp/server.js` with appropriate authentication
-2. Implement database queries with proper `user_id` scoping for data isolation
-3. Test with curl/Postman
-4. Update frontend `api.js` mock implementation if needed
-5. Use the endpoint in relevant dashboard component
-
-### Adding a New Role
-1. Add role to user registration/login logic
-2. Create new dashboard component in `src/components/`
-3. Add route in `src/App.jsx` or `src/Dashboard.jsx`
-4. Implement appropriate API endpoint protections
-5. Add any role-specific utility functions
-
-### UI/UX Guidelines
-- All text is in Arabic (RTL layout)
-- Use Tailwind CSS classes for styling (already configured)
-- Follow existing component patterns for forms, modals, tables
-- Use existing utility functions like `formatCurrency.js` for consistency
-- Modals follow pattern: props for data, onSave callback, onClose callback
-
-### Error Handling
-- Backend: Return appropriate HTTP status codes with error messages
-- Frontend: Use try/catch with apiFetch and handle errors gracefully
-- Token errors: Use onTokenError callback to redirect to login
-- Validation: Validate inputs both frontend and backend
-
-## Important Notes
-
-- The application uses localStorage mock mode by default for frontend development
-- To test against real backend, set `VITE_API_BASE` environment variable in daway-prod
-- Database backups run automatically every 24 hours in the MVP version
-- Role separation is strict: users can only access their own data unless they're admin
-- Medicine ownership is enforced via `user_id` foreign key in medicines table
+- Pharmacies cannot create purchase orders to suppliers (only supplier-side fulfilment exists; PO items reference pharmacy `medicines`, not `supplier_medicines`).
+- No password reset, no notifications (email/SMS), no audit log.
+- `server.cjs` is a single ~2k-line file; splitting into routes/services and adding automated tests is planned.
